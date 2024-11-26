@@ -1000,6 +1000,13 @@ workflows:
           name: acceptance_tests_multisite
           requires:
             - build
+      - acceptance_tests:
+          <<: *slack-fail-post-step
+          name: acceptance_latest
+          mysql_image: mysql:8.3
+          mysql_command: --default-authentication-plugin=mysql_native_password
+          requires:
+            - build
       - integration_tests:
           <<: *slack-fail-post-step
           <<: *only_trunk_and_release
