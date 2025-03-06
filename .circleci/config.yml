@@ -1078,12 +1078,14 @@ workflows:
       - acceptance_tests:
           <<: *slack-fail-post-step
           name: acceptance_tests_base_and_woo
+          wordpress_version: 6.8-beta1
           enable_hpos: 1
           requires:
             - build
       - acceptance_tests:
           <<: *slack-fail-post-step
           name: acceptance_tests_woo_hpos_sync_on
+          wordpress_version: 6.8-beta1
           group: woo
           enable_hpos_sync: 1
           requires:
@@ -1091,6 +1093,7 @@ workflows:
       - acceptance_tests:
           <<: *slack-fail-post-step
           name: acceptance_tests_woo_hpos_off
+          wordpress_version: 6.8-beta1
           group: woo
           disable_hpos: 1
           requires:
@@ -1098,6 +1101,7 @@ workflows:
       - acceptance_tests:
           <<: *slack-fail-post-step
           name: acceptance_tests_blockbased_theme
+          wordpress_version: 6.8-beta1
           group: frontend
           blockbased_theme: 1
           requires:
@@ -1117,6 +1121,7 @@ workflows:
           <<: *slack-fail-post-step
           group: woo
           name: integration_test_woo_hpos_on
+          wordpress_version: 6.8-beta1
           enable_hpos: 1
           requires:
             - build
@@ -1125,6 +1130,7 @@ workflows:
           group: woo
           disable_hpos: 1
           name: integration_test_woo_hpos_off
+          wordpress_version: 6.8-beta1
           requires:
             - build
       - integration_tests:
@@ -1132,6 +1138,7 @@ workflows:
           skip_group: woo
           skip_plugins: 1
           name: integration_test_base
+          wordpress_version: 6.8-beta1
           requires:
             - build
       - acceptance_tests:
