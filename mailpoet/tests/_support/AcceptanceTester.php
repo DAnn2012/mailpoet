@@ -65,9 +65,6 @@ class AcceptanceTester extends \Codeception\Actor {
   public function login() {
     $i = $this;
     $i->amOnPage('/wp-login.php');
-    if ($i->loadSessionSnapshot('login')) {
-      return;
-    }
 
     // remove any other WP auth & login cookies to avoid login/logout errors
     $authCookies = $i->grabCookiesWithPattern('/^wordpress_[a-z0-9]{32}$/') ?: [];
@@ -81,7 +78,6 @@ class AcceptanceTester extends \Codeception\Actor {
     $i->fillField('Password', 'password');
     $i->click('Log In');
     $i->waitForText('MailPoet', 10);
-    $i->saveSessionSnapshot('login');
   }
 
   /**
