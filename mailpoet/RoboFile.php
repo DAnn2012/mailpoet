@@ -1400,8 +1400,8 @@ class RoboFile extends \Robo\Tasks {
       $this->yell("Skipping download of WooCommerce Memberships", 40, 'red');
       exit(0); // Exit with 0 since it is a valid state for some environments
     }
-    $this->createGithubClient('woocommerce/woocommerce-memberships')
-      ->downloadReleaseZip('woocommerce-memberships.zip', __DIR__ . '/tests/plugins/', $tag);
+    $this->createGithubClient('woocommerce/all-plugins')
+      ->downloadRawFile('https://github.com/woocommerce/all-plugins/blob/master/product-packages/woocommerce-memberships/woocommerce-memberships.zip',  'woocommerce-memberships.zip', __DIR__ . '/tests/plugins/', $tag);
   }
 
   public function downloadWooCommerceSubscriptionsZip($tag = null) {
@@ -1663,7 +1663,7 @@ class RoboFile extends \Robo\Tasks {
     $testType = $opts['test_type'] ?? 'acceptance';
     $this->doctrineGenerateCache();
     return $this->taskExec(
-      'COMPOSE_HTTP_TIMEOUT=200 docker compose run ' .
+      'COMPOSE_HTTP_TIMEOUT=200 docker compose run --remove-orphans ' .
       (isset($opts['wordpress-version']) && $opts['wordpress-version'] ? '-e WORDPRESS_VERSION=' . $opts['wordpress-version'] . ' ' : '') .
       (isset($opts['skip-deps']) && $opts['skip-deps'] ? '-e SKIP_DEPS=1 ' : '') .
       (isset($opts['disable-hpos']) && $opts['disable-hpos'] ? '-e DISABLE_HPOS=1 ' : '') .

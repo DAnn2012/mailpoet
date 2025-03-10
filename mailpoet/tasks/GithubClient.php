@@ -67,6 +67,17 @@ class GithubClient {
     file_put_contents($downloadDir . '/' . $zip . '-info', $assetDownloadInfo);
   }
 
+  public function downloadRawFile(string $rawUrl, $zip, $downloadDir) {
+    if (!is_dir($downloadDir)) {
+      mkdir($downloadDir, 0777, true);
+    }
+    $url = 'https://api.github.com/repos/woocommerce/all-plugins/contents/product-packages/woocommerce-memberships/woocommerce-memberships.zip?ref=master';
+    $response = $this->get($url, ['headers' => ['Accept' => 'application/vnd.github.v3.raw']]);
+    file_put_contents($downloadDir . $zip, $response->getBody()->getContents());
+    //$this->get($rawUrl, ['sink' => $downloadDir . $zip, 'headers' => ['Accept' => 'application/octet-stream']]);
+    ///file_put_contents($downloadDir . '/' . $zip . '-info', 'test');
+  }
+
   private function getRelease($tag = null) {
     $path = 'releases/' . ($tag && $tag !== 'latest' ? "tags/$tag" : 'latest');
     $response = $this->get($path);
