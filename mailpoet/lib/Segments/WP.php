@@ -54,6 +54,9 @@ class WP {
   /** @var \MailPoetVendor\Doctrine\DBAL\Connection */
   private $databaseConnection;
 
+  /** @var ConfirmationEmailMailer */
+  private $confirmationEmailMailer;
+
   public function __construct(
     WPFunctions $wp,
     WelcomeScheduler $welcomeScheduler,
@@ -63,7 +66,8 @@ class WP {
     SubscriberChangesNotifier $subscriberChangesNotifier,
     Validator $validator,
     SegmentsRepository $segmentsRepository,
-    EntityManager $entityManager
+    EntityManager $entityManager,
+    ConfirmationEmailMailer $confirmationEmailMailer
   ) {
     $this->wp = $wp;
     $this->welcomeScheduler = $welcomeScheduler;
@@ -76,6 +80,7 @@ class WP {
     $this->entityManager = $entityManager;
     $this->databaseConnection = $this->entityManager->getConnection();
     $this->subscribersTable = $this->entityManager->getClassMetadata(SubscriberEntity::class)->getTableName();
+    $this->confirmationEmailMailer = $confirmationEmailMailer;
   }
 
   /**
@@ -126,10 +131,21 @@ class WP {
       $firstName = html_entity_decode($wpUser->display_name, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML401); // phpcs:ignore Squiz.NamingConventions.ValidVariableName.MemberNotCamelCaps
     }
     $signupConfirmationEnabled = SettingsController::getInstance()->get('signup_confirmation.enabled');
-    $status = $signupConfirmationEnabled ? SubscriberEntity::STATUS_UNCONFIRMED : SubscriberEntity::STATUS_SUBSCRIBED;
-    // we want to mark a new subscriber as unsubscribe when the checkbox from registration is unchecked
-    if (isset($_POST['mailpoet']['subscribe_on_register_active']) && (bool)$_POST['mailpoet']['subscribe_on_register_active'] === true) {
-      $status = SubscriberEntity::STATUS_UNSUBSCRIBED;
+    
+    // Check if we have a transient with a specific status for this user
+    $transientKey = 'mailpoet_new_wp_user_status_' . $wpUser->ID;
+    $status = $this->wp->getTransient($transientKey);
+    
+    // Delete the transient so it's only used once
+    if ($status) {
+      $this->wp->deleteTransient($transientKey);
+    } else {
+      // Use default status logic if no transient exists
+      $status = $signupConfirmationEnabled ? SubscriberEntity::STATUS_UNCONFIRMED : SubscriberEntity::STATUS_SUBSCRIBED;
+      // we want to mark a new subscriber as unsubscribe when the checkbox from registration is unchecked
+      if (isset($_POST['mailpoet']['subscribe_on_register_active']) && (bool)$_POST['mailpoet']['subscribe_on_register_active'] === true) {
+        $status = SubscriberEntity::STATUS_UNSUBSCRIBED;
+      }
     }
 
     // subscriber data
@@ -144,8 +160,13 @@ class WP {
 
     if (!is_null($subscriber)) {
       $data['id'] = $subscriber->getId();
-      unset($data['status']); // don't override status for existing users
-      unset($data['source']); // don't override status for existing users
+      
+      // Don't override status for existing subscribers if a transient wasn't set specifically
+      if (!$this->wp->getTransient($transientKey)) {
+        unset($data['status']);
+      }
+      
+      unset($data['source']); // don't override source for existing users
     }
 
     $addingNewUserToDisabledWPSegment = $wpSegment->getDeletedAt() !== null && $currentFilter === 'user_register';
@@ -190,17 +211,16 @@ class WP {
     $subscribeOnRegisterEnabled = SettingsController::getInstance()->get('subscribe.on_register.enabled');
     $sendConfirmationEmail =
       $signupConfirmationEnabled
-      && $subscribeOnRegisterEnabled
+      && ($subscribeOnRegisterEnabled || $status === SubscriberEntity::STATUS_UNCONFIRMED) 
       && $currentFilter !== 'profile_update'
       && !$addingNewUserToDisabledWPSegment;
 
     if ($sendConfirmationEmail && ($subscriber->getStatus() === SubscriberEntity::STATUS_UNCONFIRMED)) {
-      /** @var ConfirmationEmailMailer $confirmationEmailMailer */
-      $confirmationEmailMailer = ContainerWrapper::getInstance()->get(ConfirmationEmailMailer::class);
       try {
-        $confirmationEmailMailer->sendConfirmationEmailOnce($subscriber);
+        $this->confirmationEmailMailer->sendConfirmationEmailOnce($subscriber);
       } catch (\Exception $e) {
-        // ignore errors
+        // Log error instead of silently ignoring
+        error_log('MailPoet: Failed to send confirmation email: ' . $e->getMessage());
       }
     }
 

@@ -11,6 +11,7 @@ use MailPoet\Newsletter\Scheduler\PostNotificationScheduler;
 use MailPoet\Segments\WP;
 use MailPoet\Settings\SettingsController;
 use MailPoet\Statistics\Track\SubscriberHandler;
+use MailPoet\Subscription\AdminUserSubscription;
 use MailPoet\Subscription\Comment;
 use MailPoet\Subscription\Form;
 use MailPoet\Subscription\Manage;
@@ -97,6 +98,9 @@ class Hooks {
   /** @var WooHelper */
   private $wooHelper;
 
+  /** @var AdminUserSubscription */
+  private $adminUserSubscription;
+
   public function __construct(
     Form $subscriptionForm,
     Comment $subscriptionComment,
@@ -117,7 +121,8 @@ class Hooks {
     AutomateWooHooks $automateWooHooks,
     WooSystemInfoController $wooSystemInfoController,
     CronTrigger $cronTrigger,
-    WooHelper $wooHelper
+    WooHelper $wooHelper,
+    AdminUserSubscription $adminUserSubscription
   ) {
     $this->subscriptionForm = $subscriptionForm;
     $this->subscriptionComment = $subscriptionComment;
@@ -139,6 +144,7 @@ class Hooks {
     $this->wooSystemInfoController = $wooSystemInfoController;
     $this->cronTrigger = $cronTrigger;
     $this->wooHelper = $wooHelper;
+    $this->adminUserSubscription = $adminUserSubscription;
   }
 
   public function init() {
