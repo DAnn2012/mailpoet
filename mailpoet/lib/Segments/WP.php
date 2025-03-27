@@ -217,8 +217,9 @@ class WP {
     
     // CRITICAL: Always respect the status from the transient if it was explicitly set
     // This is needed even for existing subscribers
-    if ($status && $status !== $data['status']) {
-      error_log('MailPoet DEBUG: Overriding status with value from transient: ' . $status);
+    if ($status && isset($data['status']) && $status !== $data['status']) {
+      $data['status'] = $status;
+    } else if ($status && !isset($data['status'])) {
       $data['status'] = $status;
     }
 
