@@ -59,6 +59,9 @@ class AdminUserSubscription {
 
     $signupConfirmationEnabled = $this->settings->get('signup_confirmation.enabled');
     
+    // Generate a nonce for security
+    $nonce = $this->wp->wpCreateNonce('mailpoet_subscriber_status_nonce');
+    
     echo '<table class="form-table" role="presentation">
       <tr class="form-field">
         <th scope="row"><label for="mailpoet_subscriber_status">' . esc_html__('MailPoet Subscriber Status', 'mailpoet') . '</label></th>
@@ -80,6 +83,7 @@ class AdminUserSubscription {
     
     echo '>' . esc_html__('Unsubscribed', 'mailpoet') . '</option>
           </select>
+          <input type="hidden" name="mailpoet_subscriber_status_nonce" value="' . esc_attr($nonce) . '">
         </td>
       </tr>
     </table>';
@@ -94,6 +98,14 @@ class AdminUserSubscription {
   public function processNewUserStatus($userId) {
     // Only process if the status field was submitted (i.e., from WP admin)
     if (!isset($_POST['mailpoet_subscriber_status'])) {
+      return;
+    }
+    
+    // Verify nonce for security
+    if (
+      !isset($_POST['mailpoet_subscriber_status_nonce']) || 
+      !$this->wp->wpVerifyNonce(sanitize_text_field($_POST['mailpoet_subscriber_status_nonce']), 'mailpoet_subscriber_status_nonce')
+    ) {
       return;
     }
 

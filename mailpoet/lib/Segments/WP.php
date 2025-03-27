@@ -132,7 +132,7 @@ class WP {
     }
     $signupConfirmationEnabled = SettingsController::getInstance()->get('signup_confirmation.enabled');
     
-    // Check if we have a transient with a specific status for this user
+    // Store the transient status for the new user
     $transientKey = 'mailpoet_new_wp_user_status_' . $wpUser->ID;
     $status = $this->wp->getTransient($transientKey);
     
@@ -158,6 +158,7 @@ class WP {
       'source' => Source::WORDPRESS_USER,
     ];
 
+    // For existing subscribers
     if (!is_null($subscriber)) {
       $data['id'] = $subscriber->getId();
       
