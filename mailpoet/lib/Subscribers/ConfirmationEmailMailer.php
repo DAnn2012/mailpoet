@@ -69,7 +69,16 @@ class ConfirmationEmailMailer {
    * @throws \Exception if unable to send the email.
    */
   public function sendConfirmationEmailOnce(SubscriberEntity $subscriber): bool {
+    error_log('MailPoet DEBUG: sendConfirmationEmailOnce called for subscriber ' . $subscriber->getEmail() . ' with status ' . $subscriber->getStatus());
+    
+    // Early return if subscriber status isn't unconfirmed
+    if ($subscriber->getStatus() !== SubscriberEntity::STATUS_UNCONFIRMED) {
+      error_log('MailPoet DEBUG: Subscriber status isn\'t UNCONFIRMED, skipping email: ' . $subscriber->getStatus());
+      return false;
+    }
+    
     if (isset($this->sentEmails[$subscriber->getId()])) {
+      error_log('MailPoet DEBUG: Email already sent to this subscriber in this request, skipping');
       return true;
     }
     return $this->sendConfirmationEmail($subscriber);
@@ -157,17 +166,29 @@ class ConfirmationEmailMailer {
    * @throws \Exception if unable to send the email.
    */
   public function sendConfirmationEmail(SubscriberEntity $subscriber) {
+    error_log('MailPoet DEBUG: sendConfirmationEmail called for subscriber ' . $subscriber->getEmail() . ' with status ' . $subscriber->getStatus());
     $signupConfirmation = $this->settings->get('signup_confirmation');
+    error_log('MailPoet DEBUG: signup_confirmation.enabled = ' . ($signupConfirmation['enabled'] ? 'true' : 'false'));
+    
     if ((bool)$signupConfirmation['enabled'] === false) {
+      error_log('MailPoet DEBUG: Signup confirmation is disabled, returning false');
       return false;
     }
     if (!$this->wp->isUserLoggedIn() && $subscriber->getConfirmationsCount() >= self::MAX_CONFIRMATION_EMAILS) {
+      error_log('MailPoet DEBUG: User has reached max confirmation emails, returning false');
       return false;
     }
 
     $authorizationEmailsValidation = $this->settings->get(AuthorizedEmailsController::AUTHORIZED_EMAIL_ADDRESSES_ERROR_SETTING);
     $unauthorizedSenderEmail = isset($authorizationEmailsValidation['invalid_sender_address']);
     if (Bridge::isMPSendingServiceEnabled() && $unauthorizedSenderEmail) {
+      error_log('MailPoet DEBUG: Unauthorized sender email, returning false');
+      return false;
+    }
+
+    // Add a check for subscriber status
+    if ($subscriber->getStatus() !== SubscriberEntity::STATUS_UNCONFIRMED) {
+      error_log('MailPoet DEBUG: Subscriber status is not UNCONFIRMED, returning false');
       return false;
     }
 

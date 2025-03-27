@@ -165,6 +165,7 @@ class Hooks {
     $this->setupChangeNotifications();
     $this->setupLicenseProvisioning();
     $this->setupCaptchaOnRegisterForm();
+    $this->setupAdminUserSubscription();
     $this->deactivateMailPoetCronBeforePluginUpgrade();
   }
 
@@ -723,5 +724,11 @@ class Hooks {
     });
 
     $this->cronTrigger->disable();
+  }
+
+  private function setupAdminUserSubscription() {
+    // The AdminUserSubscription class automatically sets up its own hooks in its constructor
+    // But we need to make sure it's instantiated
+    $this->adminUserSubscription;
   }
 }

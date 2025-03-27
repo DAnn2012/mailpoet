@@ -57,6 +57,9 @@ class WP {
   /** @var ConfirmationEmailMailer */
   private $confirmationEmailMailer;
 
+  /** @var array */
+  private $processedUserIds = [];
+
   public function __construct(
     WPFunctions $wp,
     WelcomeScheduler $welcomeScheduler,
@@ -91,6 +94,32 @@ class WP {
     $wpUser = \get_userdata($wpUserId);
     if ($wpUser === false) return;
 
+    // Track current filter to debug multiple invocations
+    $currentFilter = $this->wp->currentFilter();
+    error_log('MailPoet DEBUG: synchronizeUser called for user ID ' . $wpUserId . ' from filter: ' . $currentFilter);
+
+    // First, check for the global variable that may have been set during admin form submission
+    if (isset($GLOBALS['mailpoet_new_user_status'])) {
+      $status = $GLOBALS['mailpoet_new_user_status'];
+      error_log('MailPoet DEBUG: Found global mailpoet_new_user_status: ' . $status);
+      
+      // Set the transient with this status
+      $transientKey = 'mailpoet_new_wp_user_status_' . $wpUserId;
+      $this->wp->setTransient($transientKey, $status, 5 * MINUTE_IN_SECONDS);
+      error_log('MailPoet DEBUG: Set transient from global variable: ' . $transientKey . ' with status: ' . $status);
+    }
+
+    // If this is a 'user_register' event, check if we've already processed this user
+    $transientKey = 'mailpoet_new_wp_user_status_' . $wpUserId;
+    if ($currentFilter === 'user_register') {
+      $transientValue = $this->wp->getTransient($transientKey);
+      // If we have a transient value but have already processed this user, it means another hook already handled it
+      if ($transientValue && isset($this->processedUserIds[$wpUserId])) {
+        error_log('MailPoet DEBUG: Already processed user ID ' . $wpUserId . ' with admin-selected status');
+        return;
+      }
+    }
+
     $subscriber = $this->subscribersRepository->findOneBy(['wpUserId' => $wpUserId]);
 
     $currentFilter = $this->wp->currentFilter();
@@ -102,6 +131,9 @@ class WP {
       return;
     }
     $this->handleCreatingOrUpdatingSubscriber($currentFilter, $wpUser, $subscriber, $oldWpUserData);
+    
+    // Mark this user as processed to avoid duplicate processing
+    $this->processedUserIds[$wpUserId] = true;
   }
 
   private function deleteSubscriber(SubscriberEntity $subscriber): void {
@@ -136,16 +168,29 @@ class WP {
     $transientKey = 'mailpoet_new_wp_user_status_' . $wpUser->ID;
     $status = $this->wp->getTransient($transientKey);
     
-    // Delete the transient so it's only used once
+    // Log the status right after retrieving from transient
+    error_log('MailPoet DEBUG: Status from transient for user ID ' . $wpUser->ID . ': ' . ($status ?: 'not set'));
+    
+    // If we have a status from the admin form, use it (and delete the transient)
     if ($status) {
       $this->wp->deleteTransient($transientKey);
+      error_log('MailPoet DEBUG: Using admin-selected status: ' . $status);
+      
+      // If this is an existing subscriber, force updating the status
+      if (!is_null($subscriber)) {
+        $subscriber->setStatus($status);
+        $this->subscribersRepository->persist($subscriber);
+        $this->subscribersRepository->flush();
+        error_log('MailPoet DEBUG: Updated existing subscriber status to: ' . $status);
+      }
     } else {
-      // Use default status logic if no transient exists
+      // ONLY use default status logic if no transient exists (status was not explicitly set by admin)
       $status = $signupConfirmationEnabled ? SubscriberEntity::STATUS_UNCONFIRMED : SubscriberEntity::STATUS_SUBSCRIBED;
       // we want to mark a new subscriber as unsubscribe when the checkbox from registration is unchecked
       if (isset($_POST['mailpoet']['subscribe_on_register_active']) && (bool)$_POST['mailpoet']['subscribe_on_register_active'] === true) {
         $status = SubscriberEntity::STATUS_UNSUBSCRIBED;
       }
+      error_log('MailPoet DEBUG: Using default status: ' . $status);
     }
 
     // subscriber data
@@ -169,6 +214,13 @@ class WP {
       
       unset($data['source']); // don't override source for existing users
     }
+    
+    // CRITICAL: Always respect the status from the transient if it was explicitly set
+    // This is needed even for existing subscribers
+    if ($status && $status !== $data['status']) {
+      error_log('MailPoet DEBUG: Overriding status with value from transient: ' . $status);
+      $data['status'] = $status;
+    }
 
     $addingNewUserToDisabledWPSegment = $wpSegment->getDeletedAt() !== null && $currentFilter === 'user_register';
 
@@ -186,39 +238,43 @@ class WP {
       $data['status'] = SubscriberEntity::STATUS_UNCONFIRMED;
     }
 
+    // First, create or update subscriber with the desired status
+    error_log('MailPoet DEBUG: Before creating subscriber - status in data: ' . $data['status']);
     try {
       $subscriber = $this->createOrUpdateSubscriber($data, $subscriber);
+      error_log('MailPoet DEBUG: After creating subscriber - status: ' . $subscriber->getStatus());
     } catch (\Exception $e) {
+      error_log('MailPoet DEBUG: Error creating subscriber: ' . $e->getMessage());
       return; // fails silently as this was the behavior of this methods before the Doctrine refactor.
     }
 
-    // add subscriber to the WP Users segment
+    // Add subscriber to the WP Users segment
     $this->subscriberSegmentRepository->subscribeToSegments(
       $subscriber,
       [$wpSegment]
     );
 
-    if (!$signupConfirmationEnabled && $subscriber->getStatus() === SubscriberEntity::STATUS_SUBSCRIBED && $currentFilter === 'user_register') {
-      $subscriberSegment = $this->subscriberSegmentRepository->findOneBy([
-        'subscriber' => $subscriber->getId(),
-        'segment' => $wpSegment->getId(),
-      ]);
+    // Only now check if we need to send a confirmation email
+    // Add debug logging
+    error_log('MailPoet DEBUG: Checking confirmation email conditions');
+    error_log('MailPoet DEBUG: signupConfirmationEnabled = ' . ($signupConfirmationEnabled ? 'true' : 'false'));
+    error_log('MailPoet DEBUG: subscriber status = ' . $subscriber->getStatus());
+    error_log('MailPoet DEBUG: currentFilter = ' . $currentFilter);
+    error_log('MailPoet DEBUG: addingNewUserToDisabledWPSegment = ' . ($addingNewUserToDisabledWPSegment ? 'true' : 'false'));
 
-      if (!is_null($subscriberSegment)) {
-        $this->wp->doAction('mailpoet_segment_subscribed', $subscriberSegment);
-      }
-    }
-
-    $subscribeOnRegisterEnabled = SettingsController::getInstance()->get('subscribe.on_register.enabled');
     $sendConfirmationEmail =
       $signupConfirmationEnabled
-      && ($subscribeOnRegisterEnabled || $status === SubscriberEntity::STATUS_UNCONFIRMED) 
+      && $subscriber->getStatus() === SubscriberEntity::STATUS_UNCONFIRMED
       && $currentFilter !== 'profile_update'
       && !$addingNewUserToDisabledWPSegment;
 
-    if ($sendConfirmationEmail && ($subscriber->getStatus() === SubscriberEntity::STATUS_UNCONFIRMED)) {
+    error_log('MailPoet DEBUG: Decision to send confirmation email: ' . ($sendConfirmationEmail ? 'YES' : 'NO'));
+
+    if ($sendConfirmationEmail) {
       try {
+        error_log('MailPoet DEBUG: Attempting to send confirmation email');
         $this->confirmationEmailMailer->sendConfirmationEmailOnce($subscriber);
+        error_log('MailPoet DEBUG: Confirmation email sent successfully');
       } catch (\Exception $e) {
         // Log error instead of silently ignoring
         error_log('MailPoet: Failed to send confirmation email: ' . $e->getMessage());
@@ -242,6 +298,9 @@ class WP {
   private function createOrUpdateSubscriber(array $data, ?SubscriberEntity $subscriber = null): SubscriberEntity {
     if (is_null($subscriber)) {
       $subscriber = new SubscriberEntity();
+      error_log('MailPoet DEBUG: Creating new subscriber');
+    } else {
+      error_log('MailPoet DEBUG: Updating existing subscriber with status: ' . $subscriber->getStatus());
     }
 
     $subscriber->setWpUserId($data['wp_user_id']);
@@ -250,7 +309,10 @@ class WP {
     $subscriber->setLastName($data['last_name']);
 
     if (isset($data['status'])) {
+      error_log('MailPoet DEBUG: Setting subscriber status to: ' . $data['status']);
       $subscriber->setStatus($data['status']);
+    } else {
+      error_log('MailPoet DEBUG: No status in data, keeping existing: ' . $subscriber->getStatus());
     }
 
     if (isset($data['source'])) {
@@ -261,8 +323,10 @@ class WP {
       $subscriber->setDeletedAt($data['deleted_at']);
     }
 
+    error_log('MailPoet DEBUG: About to persist subscriber with status: ' . $subscriber->getStatus());
     $this->subscribersRepository->persist($subscriber);
     $this->subscribersRepository->flush();
+    error_log('MailPoet DEBUG: After persisting, subscriber status: ' . $subscriber->getStatus());
 
     return $subscriber;
   }
