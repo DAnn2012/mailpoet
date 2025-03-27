@@ -157,17 +157,28 @@ class ConfirmationEmailMailer {
    * @throws \Exception if unable to send the email.
    */
   public function sendConfirmationEmail(SubscriberEntity $subscriber) {
+    error_log('MailPoet Debug: sendConfirmationEmail called for subscriber ID: ' . $subscriber->getId());
+    
     $signupConfirmation = $this->settings->get('signup_confirmation');
+    error_log('MailPoet Debug: signupConfirmation settings: ' . json_encode($signupConfirmation));
+    
     if ((bool)$signupConfirmation['enabled'] === false) {
+      error_log('MailPoet Debug: Confirmation emails disabled in settings');
       return false;
     }
+    
     if (!$this->wp->isUserLoggedIn() && $subscriber->getConfirmationsCount() >= self::MAX_CONFIRMATION_EMAILS) {
+      error_log('MailPoet Debug: User not logged in and max confirmation emails reached: ' . $subscriber->getConfirmationsCount());
       return false;
     }
 
     $authorizationEmailsValidation = $this->settings->get(AuthorizedEmailsController::AUTHORIZED_EMAIL_ADDRESSES_ERROR_SETTING);
     $unauthorizedSenderEmail = isset($authorizationEmailsValidation['invalid_sender_address']);
+    error_log('MailPoet Debug: authorizationEmailsValidation: ' . json_encode($authorizationEmailsValidation));
+    error_log('MailPoet Debug: unauthorizedSenderEmail: ' . ($unauthorizedSenderEmail ? 'true' : 'false'));
+    
     if (Bridge::isMPSendingServiceEnabled() && $unauthorizedSenderEmail) {
+      error_log('MailPoet Debug: Bridge sending service enabled but unauthorized sender email');
       return false;
     }
 
@@ -175,8 +186,10 @@ class ConfirmationEmailMailer {
     $segmentNames = array_map(function(SegmentEntity $segment) {
       return $segment->getName();
     }, $segments);
+    error_log('MailPoet Debug: Subscriber segments: ' . json_encode($segmentNames));
 
     $IsConfirmationEmailCustomizerEnabled = (bool)$this->settings->get(ConfirmationEmailCustomizer::SETTING_ENABLE_EMAIL_CUSTOMIZER, false);
+    error_log('MailPoet Debug: IsConfirmationEmailCustomizerEnabled: ' . ($IsConfirmationEmailCustomizerEnabled ? 'true' : 'false'));
 
     $email = $IsConfirmationEmailCustomizerEnabled ?
       $this->getMailBodyWithCustomizer($subscriber, $segmentNames) :
@@ -190,19 +203,25 @@ class ConfirmationEmailMailer {
     // Don't attempt to send confirmation email when sending is paused
     $confirmationEmailErrorMessage = __('There was an error when sending a confirmation email for your subscription. Please contact the website owner.', 'mailpoet');
     if (MailerLog::isSendingPaused()) {
+      error_log('MailPoet Debug: Sending is paused');
       throw new \Exception($confirmationEmailErrorMessage);
     }
 
     try {
+      error_log('MailPoet Debug: Attempting to send confirmation email');
       $defaultMailer = $this->mailerFactory->getDefaultMailer();
       $result = $defaultMailer->send($email, $subscriber, $extraParams);
+      error_log('MailPoet Debug: Email send result: ' . json_encode($result));
     } catch (\Exception $e) {
+      error_log('MailPoet Debug: Exception when sending email: ' . $e->getMessage() . ' (' . $e->getCode() . ')');
       MailerLog::processTransactionalEmailError(MailerError::OPERATION_CONNECT, $e->getMessage(), $e->getCode());
       throw new \Exception($confirmationEmailErrorMessage);
     }
 
     if ($result['response'] === false) {
+      error_log('MailPoet Debug: Email send response was false');
       if ($result['error'] instanceof MailerError && $result['error']->getLevel() === MailerError::LEVEL_HARD) {
+        error_log('MailPoet Debug: Hard error level: ' . (string)$result['error']->getMessage());
         MailerLog::processTransactionalEmailError($result['error']->getOperation(), (string)$result['error']->getMessage());
       }
       throw new \Exception($confirmationEmailErrorMessage);
@@ -210,13 +229,16 @@ class ConfirmationEmailMailer {
 
     // E-mail was successfully sent we need to update the MailerLog
     MailerLog::incrementSentCount();
+    error_log('MailPoet Debug: Email sent successfully, incremented sent count');
 
     if (!$this->wp->isUserLoggedIn()) {
       $subscriber->setConfirmationsCount($subscriber->getConfirmationsCount() + 1);
       $this->subscribersRepository->persist($subscriber);
       $this->subscribersRepository->flush();
+      error_log('MailPoet Debug: Updated confirmation count for subscriber: ' . $subscriber->getConfirmationsCount());
     }
     $this->sentEmails[$subscriber->getId()] = true;
+    error_log('MailPoet Debug: Added to sentEmails cache');
 
     return true;
   }

@@ -76,6 +76,27 @@ class WP {
     $this->entityManager = $entityManager;
     $this->databaseConnection = $this->entityManager->getConnection();
     $this->subscribersTable = $this->entityManager->getClassMetadata(SubscriberEntity::class)->getTableName();
+    
+    // Add hook for manual user synchronization triggered by AdminUserSubscription
+    $this->wp->addAction('mailpoet_user_sync', [$this, 'onUserSync']);
+  }
+
+  /**
+   * Handle manual synchronization of a user triggered by AdminUserSubscription
+   * 
+   * @param int $userId The WordPress user ID to synchronize
+   */
+  public function onUserSync($userId) {
+    error_log('MailPoet Debug: onUserSync called for user ID: ' . $userId);
+    
+    // Force the user to be marked as admin-created to trigger proper confirmation email
+    update_user_meta($userId, 'mailpoet_admin_created', '1');
+    
+    // Synchronize the user
+    $this->synchronizeUser($userId);
+    
+    // Clean up after ourselves
+    delete_user_meta($userId, 'mailpoet_admin_created');
   }
 
   /**
@@ -111,6 +132,9 @@ class WP {
    * @param array|false $oldWpUserData
    */
   private function handleCreatingOrUpdatingSubscriber(string $currentFilter, \WP_User $wpUser, ?SubscriberEntity $subscriber = null, $oldWpUserData = false): void {
+    // Debug logging
+    error_log('MailPoet Debug: handleCreatingOrUpdatingSubscriber called for user ' . $wpUser->ID . ' with filter: ' . $currentFilter);
+    
     // Add or update
     $wpSegment = $this->segmentsRepository->getWPUsersSegment();
 
@@ -125,11 +149,39 @@ class WP {
     if (empty($wpUser->first_name) && empty($wpUser->last_name)) { // phpcs:ignore Squiz.NamingConventions.ValidVariableName.MemberNotCamelCaps
       $firstName = html_entity_decode($wpUser->display_name, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML401); // phpcs:ignore Squiz.NamingConventions.ValidVariableName.MemberNotCamelCaps
     }
+    
     $signupConfirmationEnabled = SettingsController::getInstance()->get('signup_confirmation.enabled');
-    $status = $signupConfirmationEnabled ? SubscriberEntity::STATUS_UNCONFIRMED : SubscriberEntity::STATUS_SUBSCRIBED;
-    // we want to mark a new subscriber as unsubscribe when the checkbox from registration is unchecked
-    if (isset($_POST['mailpoet']['subscribe_on_register_active']) && (bool)$_POST['mailpoet']['subscribe_on_register_active'] === true) {
-      $status = SubscriberEntity::STATUS_UNSUBSCRIBED;
+    error_log('MailPoet Debug: signupConfirmationEnabled: ' . ($signupConfirmationEnabled ? 'true' : 'false'));
+    
+    // Check for admin-selected status in user meta
+    $adminSelectedStatus = get_user_meta($wpUser->ID, 'mailpoet_subscriber_status', true);
+    error_log('MailPoet Debug: Checking user meta for status, found: ' . ($adminSelectedStatus ?: 'not found'));
+    
+    // Check if this is admin-created user from our special hook
+    $isAdminCreated = get_user_meta($wpUser->ID, 'mailpoet_admin_created', true) === '1';
+    
+    // Flag to track if this is an admin-created user with a specific status
+    $isAdminCreatedUser = $isAdminCreated;
+    
+    if (!empty($adminSelectedStatus)) {
+      // Admin selected a status when creating this user
+      $status = $adminSelectedStatus;
+      error_log('MailPoet Debug: Using admin-selected status from user meta: ' . $status);
+      
+      // Clean up the user meta after use
+      delete_user_meta($wpUser->ID, 'mailpoet_subscriber_status');
+      
+      // Set the flag to true
+      $isAdminCreatedUser = true;
+    } else {
+      // Normal user creation flow
+      $status = $signupConfirmationEnabled ? SubscriberEntity::STATUS_UNCONFIRMED : SubscriberEntity::STATUS_SUBSCRIBED;
+      error_log('MailPoet Debug: Using default status: ' . $status);
+      // we want to mark a new subscriber as unsubscribe when the checkbox from registration is unchecked
+      if (isset($_POST['mailpoet']['subscribe_on_register_active']) && (bool)$_POST['mailpoet']['subscribe_on_register_active'] === true) {
+        $status = SubscriberEntity::STATUS_UNSUBSCRIBED;
+        error_log('MailPoet Debug: Checkbox unchecked, changing status to: ' . $status);
+      }
     }
 
     // subscriber data
@@ -144,8 +196,15 @@ class WP {
 
     if (!is_null($subscriber)) {
       $data['id'] = $subscriber->getId();
-      unset($data['status']); // don't override status for existing users
-      unset($data['source']); // don't override status for existing users
+      
+      // If this is an admin-created user with a specific status,
+      // we want to override the status even for existing subscribers
+      if ($isAdminCreatedUser) {
+        error_log('MailPoet Debug: Admin-created user, keeping status even for existing subscriber');
+      } else {
+        unset($data['status']); // don't override status for existing users in normal flow
+        unset($data['source']); // don't override source for existing users in normal flow
+      }
     }
 
     $addingNewUserToDisabledWPSegment = $wpSegment->getDeletedAt() !== null && $currentFilter === 'user_register';
@@ -166,7 +225,9 @@ class WP {
 
     try {
       $subscriber = $this->createOrUpdateSubscriber($data, $subscriber);
+      error_log('MailPoet Debug: Subscriber created/updated with status: ' . $subscriber->getStatus());
     } catch (\Exception $e) {
+      error_log('MailPoet Debug: Failed to create/update subscriber: ' . $e->getMessage());
       return; // fails silently as this was the behavior of this methods before the Doctrine refactor.
     }
 
@@ -187,19 +248,43 @@ class WP {
       }
     }
 
+    // Modified condition to check if this is an admin-created user and handle accordingly
     $subscribeOnRegisterEnabled = SettingsController::getInstance()->get('subscribe.on_register.enabled');
-    $sendConfirmationEmail =
-      $signupConfirmationEnabled
-      && $subscribeOnRegisterEnabled
-      && $currentFilter !== 'profile_update'
-      && !$addingNewUserToDisabledWPSegment;
+    error_log('MailPoet Debug: subscribeOnRegisterEnabled: ' . ($subscribeOnRegisterEnabled ? 'true' : 'false'));
+    
+    // Force this flag to true if this is an admin-selected status confirmation
+    $adminRequestedConfirmation = get_user_meta($wpUser->ID, 'mailpoet_admin_selected_status', true) === '1';
+    if ($adminRequestedConfirmation) {
+      error_log('MailPoet Debug: Admin requested confirmation detected, forcing subscribeOnRegisterEnabled to true');
+      $subscribeOnRegisterEnabled = true;
+      
+      // Clean up
+      delete_user_meta($wpUser->ID, 'mailpoet_admin_selected_status');
+    }
+    
+    // Send confirmation email only if the subscriber status is UNCONFIRMED and:
+    // For admin-created users: allow sending regardless of filter
+    // For regular users: only when not on profile_update and signup confirmation is enabled
+    $sendConfirmationEmail = 
+      $signupConfirmationEnabled &&
+      $subscriber->getStatus() === SubscriberEntity::STATUS_UNCONFIRMED &&
+      !$addingNewUserToDisabledWPSegment &&
+      ($isAdminCreatedUser || ($subscribeOnRegisterEnabled && $currentFilter !== 'profile_update'));
+    
+    error_log('MailPoet Debug: sendConfirmationEmail: ' . ($sendConfirmationEmail ? 'true' : 'false'));
+    error_log('MailPoet Debug: isAdminCreatedUser: ' . ($isAdminCreatedUser ? 'true' : 'false'));
+    error_log('MailPoet Debug: currentFilter: ' . $currentFilter);
+    error_log('MailPoet Debug: subscriber status: ' . $subscriber->getStatus());
 
-    if ($sendConfirmationEmail && ($subscriber->getStatus() === SubscriberEntity::STATUS_UNCONFIRMED)) {
+    if ($sendConfirmationEmail) {
       /** @var ConfirmationEmailMailer $confirmationEmailMailer */
+      error_log('MailPoet Debug: Attempting to send confirmation email');
       $confirmationEmailMailer = ContainerWrapper::getInstance()->get(ConfirmationEmailMailer::class);
       try {
-        $confirmationEmailMailer->sendConfirmationEmailOnce($subscriber);
+        $result = $confirmationEmailMailer->sendConfirmationEmailOnce($subscriber);
+        error_log('MailPoet Debug: Confirmation email sent result: ' . ($result ? 'true' : 'false'));
       } catch (\Exception $e) {
+        error_log('MailPoet Debug: Failed to send confirmation email: ' . $e->getMessage());
         // ignore errors
       }
     }

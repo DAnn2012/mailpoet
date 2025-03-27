@@ -559,15 +559,16 @@ class ContainerConfigurator implements IContainerConfigurator {
     $container->autowire(\MailPoet\Settings\UserFlagsController::class);
     $container->autowire(\MailPoet\Settings\UserFlagsRepository::class)->setPublic(true);
     // Subscription
+    $container->autowire(\MailPoet\Subscription\Blacklist::class)->setPublic(true);
+    $container->autowire(\MailPoet\Subscription\SubscriptionUrlFactory::class)->setPublic(true);
     $container->autowire(\MailPoet\Subscription\Comment::class)->setPublic(true);
     $container->autowire(\MailPoet\Subscription\Form::class)->setPublic(true);
     $container->autowire(\MailPoet\Subscription\Manage::class)->setPublic(true);
     $container->autowire(\MailPoet\Subscription\ManageSubscriptionFormRenderer::class)->setPublic(true);
-    $container->autowire(\MailPoet\Subscription\Pages::class)->setPublic(true)
-      ->setShared(false); // Get a new instance each time $container->get() is called, needed for tests
+    $container->autowire(\MailPoet\Subscription\Pages::class)->setPublic(true);
     $container->autowire(\MailPoet\Subscription\Registration::class)->setPublic(true);
     $container->autowire(\MailPoet\Subscription\Throttling::class)->setPublic(true);
-    $container->autowire(\MailPoet\Subscription\SubscriptionUrlFactory::class)->setPublic(true);
+    $container->autowire(\MailPoet\Subscription\AdminUserSubscription::class)->setPublic(true);
     // Newsletter
     $container->autowire(\MailPoet\Newsletter\ApiDataSanitizer::class)->setPublic(true);
     $container->autowire(\MailPoet\Newsletter\AutomatedLatestContent::class)->setPublic(true);
