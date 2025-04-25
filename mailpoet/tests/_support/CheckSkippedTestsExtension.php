@@ -30,7 +30,7 @@ class CheckSkippedTestsExtension extends Extension {
       'createSegmentForMembershipPlan',
     ];
 
-    if (in_array($branch, ['trunk', 'release']) && !in_array($testName, $allowedToSkipList)) {
+    if (in_array($branch, ['trunk', 'release', 'allow-skip-woo-memberships-test']) && !in_array($testName, $allowedToSkipList)) {
       throw new \PHPUnit\Framework\ExpectationFailedException("Failed, cannot skip tests on branch $branch.");
     }
   }
