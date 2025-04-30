@@ -129,6 +129,13 @@ class ShortcodesHelper {
           'shortcode' => '[site:homepage_url]',
         ],
       ],
+      __('Automation', 'mailpoet') => [
+        [
+          'text' => __('FIXME', 'mailpoet'),
+          'shortcode' => '[automation:order_id]',
+        ],
+        // TODO: add getAutomationFields.
+      ],
     ];
     $customFields = $this->getCustomFields();
     if (count($customFields) > 0) {
